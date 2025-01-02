@@ -1,0 +1,55 @@
+---
+title: "ML Midterm"
+author: "Andrew Lewis"
+date: "2024-11-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+training <- read.csv("https://raw.githubusercontent.com/IAA-Faculty/statistical_foundations/master/tele_churn3.csv")
+```
+
+```{r}
+str(training)
+```
+
+```{r}
+# Converting categorical variables to factors
+training$international.plan <- as.factor(training$international.plan)
+training$voice.mail.plan <- as.factor(training$voice.mail.plan)
+training$churn <- as.factor(training$churn)
+```
+
+```{r}
+# Training MARS model
+library(earth)
+
+mars <- earth(churn ~ ., data = training, glm = list(family = binomial))
+summary(mars)
+
+# Assessing variable importance in MARS model
+evimp(mars)
+```
+
+```{r}
+# Training GAM model
+library(mgcv)
+gam <- mgcv::gam(churn ~ s(total.intl.calls), method = "REML", data = training, 
+                 family = binomial(link = "logit"))
+summary(gam)
+plot(gam)
+```
+
+```{r}
+library(randomForest)
+set.seed(8675309)
+training$churn <- as.factor(training$churn)
+
+rf.churn <- randomForest(churn ~ ., data = training, ntree = 250, importance = TRUE)
+varImpPlot(rf.churn, sort = TRUE, main = "Order of Variables")
+```
+

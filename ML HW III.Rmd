@@ -1,0 +1,322 @@
+---
+title: "ML HW III"
+author: "Andrew Lewis"
+date: "2024-11-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Loading in given data
+library(readr)
+library(tidyverse)
+library(caret)
+library(glmnet)
+library(earth)
+library(mgcv)
+library(randomForest)
+library(xgboost)
+library(pdp)
+library(nnet)
+library(NeuralNetTools)
+library(caret)
+library(ggplot2)
+library(reshape2)
+library(e1071)
+library(klaR)
+library(randomForest)
+library(iml)
+library(patchwork)
+
+ins.t <- read_csv("insurance_t.csv")
+ins.v <- read_csv("insurance_v.csv")
+
+# Combine training and validation datasets temporarily
+combined <- rbind(ins.t, ins.v)
+combined$PHONE <- as.numeric(combined$PHONE)
+```
+
+```{r}
+# Creating missing columns for all variables with missing values
+combined <- combined %>% mutate(AGE_M = ifelse(is.na(AGE), 1, 0)) %>% 
+  mutate(INCOME_M = ifelse(is.na(INCOME), 1, 0)) %>% 
+  mutate(LORES_M = ifelse(is.na(LORES), 1, 0)) %>% 
+  mutate(HMVAL_M = ifelse(is.na(HMVAL), 1, 0)) %>%
+  mutate(PHONE_M = ifelse(is.na(PHONE), 1, 0)) %>%
+  mutate(POS_M = ifelse(is.na(POS), 1, 0)) %>%
+  mutate(POSAMT_M = ifelse(is.na(POSAMT), 1, 0)) %>%
+  mutate(INV_M = ifelse(is.na(INV), 1, 0)) %>%
+  mutate(INVBAL_M = ifelse(is.na(INVBAL), 1, 0)) %>%
+  mutate(CC_M = ifelse(is.na(CC), 1, 0)) %>%
+  mutate(CCBAL_M = ifelse(is.na(CCBAL), 1, 0)) %>%
+  mutate(CCPURC_M = ifelse(is.na(CCPURC), 1, 0)) %>%
+  mutate(ACCTAGE_M = ifelse(is.na(ACCTAGE), 1, 0)) %>%
+  mutate(CRSCORE_M = ifelse(is.na(CRSCORE), 1, 0))
+```
+
+```{r}
+# Imputing continuous variables
+combined$AGE[is.na(combined$AGE)] <- median(combined$AGE, na.rm = TRUE)
+combined$INCOME[is.na(combined$INCOME)] <- median(combined$INCOME, na.rm = TRUE)
+combined$LORES[is.na(combined$LORES)] <- median(combined$LORES, na.rm = TRUE)
+combined$HMVAL[is.na(combined$HMVAL)] <- median(combined$HMVAL, na.rm = TRUE)
+combined$PHONE[is.na(combined$PHONE)] <- median(combined$PHONE, na.rm = TRUE)
+combined$POS[is.na(combined$POS)] <- median(combined$POS, na.rm = TRUE)
+combined$POSAMT[is.na(combined$POSAMT)] <- median(combined$POSAMT, na.rm = TRUE)
+combined$INVBAL[is.na(combined$INVBAL)] <- median(combined$INVBAL, na.rm = TRUE)
+combined$CCBAL[is.na(combined$CCBAL)] <- median(combined$CCBAL, na.rm = TRUE)
+combined$ACCTAGE[is.na(combined$ACCTAGE)] <- median(combined$ACCTAGE, na.rm = TRUE)
+combined$CRSCORE[is.na(combined$CRSCORE)] <- median(combined$CRSCORE, na.rm = TRUE)
+```
+
+```{r}
+# Imputing categorical variables
+library(DescTools)
+combined$INV[is.na(combined$INV)] <- Mode(na.omit(combined$INV))
+combined$CC[is.na(combined$CC)] <- Mode(na.omit(combined$CC))
+combined$CCPURC[is.na(combined$CCPURC)] <- Mode(na.omit(combined$CCPURC))
+```
+
+```{r}
+# Ensuring continuous variables match indicators
+combined$POSAMT[combined$POS == 0] <- 0
+combined$INVBAL[combined$INV == 0] <- 0
+combined$CCBAL[combined$CC == 0] <- 0
+combined$CCPURC[combined$CC == 0] <- 0
+```
+
+```{r}
+# Generate dummy variables for the combined dataset
+combined_x <- model.matrix(INS ~ ., data = combined)[, -1]
+combined_x <- as.data.frame(combined_x)
+
+# Combine the dummy variables with the original `INS` column
+combined <- cbind(INS = combined$INS, as.data.frame(combined_x))
+
+# Separate back into training and validation sets
+n_train <- nrow(ins.t)
+ins.t <- combined[1:n_train, ]  # First `n_train` rows for training
+ins.v <- combined[(n_train + 1):nrow(combined), ]  # Remaining rows for validation
+```
+
+```{r}
+# Converting categorical variables to factors
+ins.t$INS <- as.factor(ins.t$INS)
+ins.t$DDA <- as.factor(ins.t$DDA)
+ins.t$DIRDEP <- as.factor(ins.t$DIRDEP)
+ins.t$SAV <- as.factor(ins.t$SAV)
+ins.t$ATM <- as.factor(ins.t$ATM)
+ins.t$CD <- as.factor(ins.t$IRA)
+ins.t$INV <- as.factor(ins.t$INV)
+ins.t$MM <- as.factor(ins.t$MM)
+ins.t$CC <- as.factor(ins.t$CC)
+ins.t$SDB <- as.factor(ins.t$SDB)
+ins.t$INAREA <- as.factor(ins.t$INAREA)
+for (i in 2:19) {
+  ins.t[[paste0("BRANCHB", i)]] <- as.factor(ins.t[[paste0("BRANCHB", i)]])
+}
+ins.t$NSF <- as.factor(ins.t$NSF)
+ins.t$MMCRED <- as.factor(ins.t$MMCRED)
+ins.t$CCPURC <- as.factor(ins.t$CCPURC)
+
+ins.v$INS <- as.factor(ins.v$INS)
+ins.v$DDA <- as.factor(ins.v$DDA)
+ins.v$DIRDEP <- as.factor(ins.v$DIRDEP)
+ins.v$SAV <- as.factor(ins.v$SAV)
+ins.v$ATM <- as.factor(ins.v$ATM)
+ins.v$CD <- as.factor(ins.v$IRA)
+ins.v$INV <- as.factor(ins.v$INV)
+ins.v$MM <- as.factor(ins.v$MM)
+ins.v$CC <- as.factor(ins.v$CC)
+ins.v$SDB <- as.factor(ins.v$SDB)
+ins.v$INAREA <- as.factor(ins.v$INAREA)
+for (i in 2:19) {
+  ins.v[[paste0("BRANCHB", i)]] <- as.factor(ins.v[[paste0("BRANCHB", i)]])
+}
+ins.v$NSF <- as.factor(ins.v$NSF)
+ins.v$MMCRED <- as.factor(ins.v$MMCRED)
+ins.v$CCPURC <- as.factor(ins.v$CCPURC)
+```
+
+```{r}
+# Scaling continuous variables
+ins.t <- ins.t %>%
+  mutate(ACCTAGE = scale(ACCTAGE)[,1],
+         DDABAL = scale(DDABAL)[,1],
+         DEPAMT = scale(DEPAMT)[,1],
+         CHECKS = scale(CHECKS)[,1],
+         NSFAMT = scale(NSFAMT)[,1],
+         PHONE = scale(PHONE)[,1],
+         TELLER = scale(TELLER)[,1],
+         SAVBAL = scale(SAVBAL)[,1],
+         ATMAMT = scale(ATMAMT)[,1],
+         POS = scale(POS)[,1],
+         POSAMT = scale(POSAMT)[,1],
+         CDBAL = scale(CDBAL)[,1],
+         IRABAL = scale(IRABAL)[,1],
+         INVBAL = scale(INVBAL)[,1],
+         MMBAL = scale(MMBAL)[,1],
+         CCBAL = scale(CCBAL)[,1],
+         INCOME = scale(INCOME)[,1],
+         LORES = scale(LORES)[,1],
+         HMVAL = scale(HMVAL)[,1],
+         AGE = scale(AGE)[,1],
+         CRSCORE = scale(CRSCORE)[,1])
+
+ins.v <- ins.v %>%
+  mutate(ACCTAGE = scale(ACCTAGE)[,1],
+         DDABAL = scale(DDABAL)[,1],
+         DEPAMT = scale(DEPAMT)[,1],
+         CHECKS = scale(CHECKS)[,1],
+         NSFAMT = scale(NSFAMT)[,1],
+         PHONE = scale(PHONE)[,1],
+         TELLER = scale(TELLER)[,1],
+         SAVBAL = scale(SAVBAL)[,1],
+         ATMAMT = scale(ATMAMT)[,1],
+         POS = scale(POS)[,1],
+         POSAMT = scale(POSAMT)[,1],
+         CDBAL = scale(CDBAL)[,1],
+         IRABAL = scale(IRABAL)[,1],
+         INVBAL = scale(INVBAL)[,1],
+         MMBAL = scale(MMBAL)[,1],
+         CCBAL = scale(CCBAL)[,1],
+         INCOME = scale(INCOME)[,1],
+         LORES = scale(LORES)[,1],
+         HMVAL = scale(HMVAL)[,1],
+         AGE = scale(AGE)[,1],
+         CRSCORE = scale(CRSCORE)[,1])
+```
+
+```{r}
+set.seed(12345)
+
+tune_grid <- expand.grid(
+  .size = c(3, 4, 5, 6, 7),
+  .decay = c(0, 0.5, 1)
+)
+
+nnet.ins.caret <- caret::train(INS ~ ., data = ins.t,
+                       method = "nnet", 
+                       tuneGrid = tune_grid,
+                       trControl = trainControl(method = 'cv', number = 10),
+                       trace = F, linout = F)
+
+nnet.ins.caret$bestTune
+```
+
+```{r}
+nnet.ins <- nnet(INS ~ ., data = ins.t, size = 3, decay = 0.5, linout = F, maxit = 300)
+```
+
+```{r}
+# Collecting NNet predictions on the training set
+ins.v$p_hat <- predict(nnet.ins, newdata = ins.v)
+
+# Plotting the ROC curve
+library(ROCit)
+nnet_roc <- rocit(ins.v$p_hat[,1], ins.v$INS)
+plot(nnet_roc)
+nnet_roc$AUC
+```
+
+```{r}
+# Constructing PDP plot
+predictor <- Predictor$new(
+  model = nnet.ins, 
+  data = ins.t[, -which(names(ins.t) == "INS")],  # Exclude the target variable
+  y = ins.t$INS
+)
+
+pdp_plot <- FeatureEffects$new(predictor, method = "pdp")
+pdp_plot$plot(c("ACCTAGE"))
+```
+
+```{r}
+# Constructing ALE plot
+ale_plot <- FeatureEffects$new(predictor, method = "ale")
+ale_plot$plot(c("ACCTAGE"))
+```
+
+```{r}
+# Rebuilding the XGBoost model
+insurance_t <- read_csv("insurance_t.csv")
+
+insurance_t <- insurance_t %>% mutate(AGE_M = ifelse(is.na(AGE), 1, 0)) %>% 
+  mutate(INCOME_M = ifelse(is.na(INCOME), 1, 0)) %>% 
+  mutate(LORES_M = ifelse(is.na(LORES), 1, 0)) %>% 
+  mutate(HMVAL_M = ifelse(is.na(HMVAL), 1, 0)) %>%
+  mutate(PHONE_M = ifelse(is.na(PHONE), 1, 0)) %>%
+  mutate(POS_M = ifelse(is.na(POS), 1, 0)) %>%
+  mutate(POSAMT_M = ifelse(is.na(POSAMT), 1, 0)) %>%
+  mutate(INV_M = ifelse(is.na(INV), 1, 0)) %>%
+  mutate(INVBAL_M = ifelse(is.na(INVBAL), 1, 0)) %>%
+  mutate(CC_M = ifelse(is.na(CC), 1, 0)) %>%
+  mutate(CCBAL_M = ifelse(is.na(CCBAL), 1, 0)) %>%
+  mutate(CCPURC_M = ifelse(is.na(CCPURC), 1, 0)) %>%
+  mutate(ACCTAGE_M = ifelse(is.na(ACCTAGE), 1, 0)) %>%
+  mutate(CRSCORE_M = ifelse(is.na(CRSCORE), 1, 0))
+
+insurance_t$AGE[is.na(insurance_t$AGE)] <- median(insurance_t$AGE, na.rm = TRUE)
+insurance_t$INCOME[is.na(insurance_t$INCOME)] <- median(insurance_t$INCOME, na.rm = TRUE)
+insurance_t$LORES[is.na(insurance_t$LORES)] <- median(insurance_t$LORES, na.rm = TRUE)
+insurance_t$HMVAL[is.na(insurance_t$HMVAL)] <- median(insurance_t$HMVAL, na.rm = TRUE)
+insurance_t$PHONE[is.na(insurance_t$PHONE)] <- median(insurance_t$PHONE, na.rm = TRUE)
+insurance_t$POS[is.na(insurance_t$POS)] <- median(insurance_t$POS, na.rm = TRUE)
+insurance_t$POSAMT[is.na(insurance_t$POSAMT)] <- median(insurance_t$POSAMT, na.rm = TRUE)
+insurance_t$INVBAL[is.na(insurance_t$INVBAL)] <- median(insurance_t$INVBAL, na.rm = TRUE)
+insurance_t$CCBAL[is.na(insurance_t$CCBAL)] <- median(insurance_t$CCBAL, na.rm = TRUE)
+insurance_t$ACCTAGE[is.na(insurance_t$ACCTAGE)] <- median(insurance_t$ACCTAGE, na.rm = TRUE)
+insurance_t$CRSCORE[is.na(insurance_t$CRSCORE)] <- median(insurance_t$CRSCORE, na.rm = TRUE)
+
+insurance_t$INV[is.na(insurance_t$INV)] <- Mode(na.omit(insurance_t$INV))
+insurance_t$CC[is.na(insurance_t$CC)] <- Mode(na.omit(insurance_t$CC))
+insurance_t$CCPURC[is.na(insurance_t$CCPURC)] <- Mode(na.omit(insurance_t$CCPURC))
+
+insurance_t$INS <- as.factor(insurance_t$INS)
+insurance_t$DDA <- as.factor(insurance_t$DDA)
+insurance_t$DIRDEP <- as.factor(insurance_t$DIRDEP)
+insurance_t$SAV <- as.factor(insurance_t$SAV)
+insurance_t$ATM <- as.factor(insurance_t$ATM)
+insurance_t$CD <- as.factor(insurance_t$IRA)
+insurance_t$INV <- as.factor(insurance_t$INV)
+insurance_t$MM <- as.factor(insurance_t$MM)
+insurance_t$CC <- as.factor(insurance_t$CC)
+insurance_t$SDB <- as.factor(insurance_t$SDB)
+insurance_t$INAREA <- as.factor(insurance_t$INAREA)
+insurance_t$BRANCH <- as.factor(insurance_t$BRANCH)
+insurance_t$NSF <- as.factor(insurance_t$NSF)
+insurance_t$MMCRED <- as.factor(insurance_t$MMCRED)
+insurance_t$CCPURC <- as.factor(insurance_t$CCPURC)
+
+insurance_t$POSAMT[insurance_t$POS == 0] <- 0
+insurance_t$INVBAL[insurance_t$INV == 0] <- 0
+insurance_t$CCBAL[insurance_t$CC == 0] <- 0
+insurance_t$CCPURC[insurance_t$CC == 0] <- 0
+
+train_x <- model.matrix(INS ~ ., data = insurance_t)[, -1]
+train_y <- as.numeric(insurance_t$INS) - 1
+
+# Model with tuned parameters
+set.seed(12345)
+library(xgboost)
+xgb_final <- xgboost(data = train_x, label = train_y, nrounds = 10,
+                   eta = 0.25, max_depth = 5, gamma = 0, colsample_bytree = 1,
+                   min_child_weight = 1, subsample = 0.75,
+                   objective = "binary:logistic")
+
+pred_xgb_final <- predict(xgb_final, train_x)
+
+# Plotting the ROC curve
+xgb3_roc <- rocit(pred_xgb_final, insurance_t$INS)
+plot(xgb3_roc)
+xgb3_roc$AUC
+```
+
+```{r}
+# Examining variable importance
+xgb.importance(feature_names = colnames(train_x), model = xgb_final)
+```
+

@@ -1,0 +1,190 @@
+---
+title: "ML HW I"
+author: "Andrew Lewis"
+date: "2024-11-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Loading in given data
+library(readr)
+set.seed(123)
+insurance_t <- read_csv("insurance_t.csv")
+```
+
+```{r}
+# Creating missing columns for all variables with missing values
+library(dplyr)
+insurance_t <- insurance_t %>% mutate(AGE_M = ifelse(is.na(AGE), 1, 0)) %>% 
+  mutate(INCOME_M = ifelse(is.na(INCOME), 1, 0)) %>% 
+  mutate(LORES_M = ifelse(is.na(LORES), 1, 0)) %>% 
+  mutate(HMVAL_M = ifelse(is.na(HMVAL), 1, 0)) %>%
+  mutate(PHONE_M = ifelse(is.na(PHONE), 1, 0)) %>%
+  mutate(POS_M = ifelse(is.na(POS), 1, 0)) %>%
+  mutate(POSAMT_M = ifelse(is.na(POSAMT), 1, 0)) %>%
+  mutate(INV_M = ifelse(is.na(INV), 1, 0)) %>%
+  mutate(INVBAL_M = ifelse(is.na(INVBAL), 1, 0)) %>%
+  mutate(CC_M = ifelse(is.na(CC), 1, 0)) %>%
+  mutate(CCBAL_M = ifelse(is.na(CCBAL), 1, 0)) %>%
+  mutate(CCPURC_M = ifelse(is.na(CCPURC), 1, 0)) %>%
+  mutate(ACCTAGE_M = ifelse(is.na(ACCTAGE), 1, 0)) %>%
+  mutate(CRSCORE_M = ifelse(is.na(CRSCORE), 1, 0))
+```
+
+```{r}
+# Imputing continuous variables
+insurance_t$AGE[is.na(insurance_t$AGE)] <- median(insurance_t$AGE, na.rm = TRUE)
+insurance_t$INCOME[is.na(insurance_t$INCOME)] <- median(insurance_t$INCOME, na.rm = TRUE)
+insurance_t$LORES[is.na(insurance_t$LORES)] <- median(insurance_t$LORES, na.rm = TRUE)
+insurance_t$HMVAL[is.na(insurance_t$HMVAL)] <- median(insurance_t$HMVAL, na.rm = TRUE)
+insurance_t$PHONE[is.na(insurance_t$PHONE)] <- median(insurance_t$PHONE, na.rm = TRUE)
+insurance_t$POS[is.na(insurance_t$POS)] <- median(insurance_t$POS, na.rm = TRUE)
+insurance_t$POSAMT[is.na(insurance_t$POSAMT)] <- median(insurance_t$POSAMT, na.rm = TRUE)
+insurance_t$INVBAL[is.na(insurance_t$INVBAL)] <- median(insurance_t$INVBAL, na.rm = TRUE)
+insurance_t$CCBAL[is.na(insurance_t$CCBAL)] <- median(insurance_t$CCBAL, na.rm = TRUE)
+insurance_t$ACCTAGE[is.na(insurance_t$ACCTAGE)] <- median(insurance_t$ACCTAGE, na.rm = TRUE)
+insurance_t$CRSCORE[is.na(insurance_t$CRSCORE)] <- median(insurance_t$CRSCORE, na.rm = TRUE)
+```
+
+```{r}
+# Imputing categorical variables
+library(DescTools)
+insurance_t$INV[is.na(insurance_t$INV)] <- Mode(na.omit(insurance_t$INV))
+insurance_t$CC[is.na(insurance_t$CC)] <- Mode(na.omit(insurance_t$CC))
+insurance_t$CCPURC[is.na(insurance_t$CCPURC)] <- Mode(na.omit(insurance_t$CCPURC))
+```
+
+```{r}
+# Converting categorical variables to factors
+insurance_t$INS <- as.factor(insurance_t$INS)
+insurance_t$DDA <- as.factor(insurance_t$DDA)
+insurance_t$DIRDEP <- as.factor(insurance_t$DIRDEP)
+insurance_t$SAV <- as.factor(insurance_t$SAV)
+insurance_t$ATM <- as.factor(insurance_t$ATM)
+insurance_t$CD <- as.factor(insurance_t$IRA)
+insurance_t$INV <- as.factor(insurance_t$INV)
+insurance_t$MM <- as.factor(insurance_t$MM)
+insurance_t$CC <- as.factor(insurance_t$CC)
+insurance_t$SDB <- as.factor(insurance_t$SDB)
+insurance_t$INAREA <- as.factor(insurance_t$INAREA)
+insurance_t$BRANCH <- as.factor(insurance_t$BRANCH)
+insurance_t$NSF <- as.factor(insurance_t$NSF)
+insurance_t$MMCRED <- as.factor(insurance_t$MMCRED)
+insurance_t$CCPURC <- as.factor(insurance_t$CCPURC)
+insurance_t <- insurance_t %>%
+  mutate(across((ncol(insurance_t) - 13):ncol(insurance_t), as.factor))
+```
+
+```{r}
+# Ensuring continuous variables match indicators
+insurance_t$POSAMT[insurance_t$POS == 0] <- 0
+insurance_t$INVBAL[insurance_t$INV == 0] <- 0
+insurance_t$CCBAL[insurance_t$CC == 0] <- 0
+insurance_t$CCPURC[insurance_t$CC == 0] <- 0
+```
+
+```{r}
+# Training MARS model
+library(earth)
+mars <- earth(INS ~ ., data = insurance_t, glm = list(family = binomial))
+summary(mars)
+```
+
+```{r}
+# Assessing variable importance in MARS model
+evimp(mars)
+```
+
+```{r}
+# Collecting MARS predictions on the training set
+insurance_t$p_hat <- predict(mars, type = "response")
+
+# Plotting the ROC curve
+library(ROCit)
+mars_roc <- rocit(insurance_t$p_hat[,"1"], insurance_t$INS)
+plot(mars_roc)
+mars_roc$AUC
+```
+
+```{r, fig.width=7, fig.height=3}
+logit_roc_tbl <- as_tibble(data.frame(FPR=mars_roc$FPR, TPR=mars_roc$TPR))
+ggplot(logit_roc_tbl, aes(x = FPR)) +
+  geom_line(aes(y = TPR, color="Empirical ROC Curve")) +
+  geom_line(aes(y = FPR, color="Chance Line"), linetype="dashed") +
+  # geom_point(aes(y = cutoff, color="Optimal Cutoff Point"), shape=8) +
+  labs(
+    title= "ROC Curve", 
+    y= "Senstivity (TPR)", 
+    x= "1 - Specificity (FPR)",
+    color = ""
+  ) +
+  scale_color_manual(values = c("black", "#D55E00"))+
+  theme(axis.text=element_text(size=8),
+        axis.title=element_text(size=10),
+        legend.text=element_text(size=8))
+```
+
+```{r}
+# Training GAM model
+library(mgcv)
+gam <- mgcv::gam(INS ~ s(ACCTAGE) + s(DDABAL) + s(DEP) + s(DEPAMT) + s(CHECKS) + 
+                   s(NSFAMT) + s(PHONE) + s(TELLER) + s(SAVBAL) + s(ATMAMT) + 
+                   s(POS) + s(POSAMT) + s(CDBAL) + s(IRABAL) + s(INVBAL) + 
+                   s(MMBAL) + s(CCBAL) + s(INCOME) + s(LORES) + s(HMVAL) + 
+                   s(AGE) + s(CRSCORE) + DDA + DIRDEP + SAV + ATM + CD + INV + 
+                   MM + CC + SDB + INAREA + BRANCH + NSF + MMCRED + CCPURC + AGE_M +
+                   INCOME_M + LORES_M + HMVAL_M + PHONE_M + POS_M + POSAMT_M +
+                   INV_M + INVBAL_M + CC_M + CCBAL_M + CCPURC_M + ACCTAGE_M +
+                   CRSCORE_M, select = TRUE, data = insurance_t, family = binomial(link = "logit"))
+summary(gam)
+```
+
+```{r}
+# Testing for variable significance in GAM model
+anova.gam(gam)
+```
+
+```{r}
+# Training a GAM model on significant variables
+gam.final <- mgcv::gam(INS ~ s(ACCTAGE) + s(DDABAL) + s(CHECKS) + s(TELLER) + 
+                   s(SAVBAL) + s(ATMAMT) + s(CDBAL) + s(MMBAL) + s(CCBAL) + 
+                   DDA + CD + INV + CC + BRANCH + NSF + INV_M + 
+                   CC_M + CCBAL_M + ACCTAGE_M, 
+                 data = insurance_t, family = binomial(link = "logit"))
+summary(gam.final)
+```
+
+```{r}
+# Collecting final GAM model predictions on the training set
+insurance_t$p_hat2 <- predict(gam.final, type = "response")
+
+# Plotting the ROC curve
+library(ROCit)
+gam_roc <- rocit(insurance_t$p_hat2, insurance_t$INS)
+plot(gam_roc)
+gam_roc$AUC
+```
+
+```{r, fig.width=7, fig.height=3}
+logit_roc_tbl <- as_tibble(data.frame(FPR=gam_roc$FPR, TPR=gam_roc$TPR))
+ggplot(logit_roc_tbl, aes(x = FPR)) +
+  geom_line(aes(y = TPR, color="Empirical ROC Curve")) +
+  geom_line(aes(y = FPR, color="Chance Line"), linetype="dashed") +
+  # geom_point(aes(y = cutoff, color="Optimal Cutoff Point"), shape=8) +
+  labs(
+    title= "ROC Curve", 
+    y= "Senstivity (TPR)", 
+    x= "1 - Specificity (FPR)",
+    color = ""
+  ) +
+  scale_color_manual(values = c("black", "#D55E00"))+
+  theme(axis.text=element_text(size=8),
+        axis.title=element_text(size=10),
+        legend.text=element_text(size=8))
+```
+
+
